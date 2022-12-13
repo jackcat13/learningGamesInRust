@@ -1,198 +1,217 @@
+mod direction;
 mod components;
-mod physics;
-mod animator;
-mod keyboard;
+mod resources;
+mod systems;
 mod renderer;
-mod ai;
 
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
-use sdl2::pixels::Color;
-use sdl2::rect::{Point, Rect};
-// "self" imports the "image" module itself as well as everything else we listed
-use sdl2::image::{self, LoadTexture, InitFlag};
+use std::ops::ControlFlow;
+use std::thread;
+use std::error::Error;
+use std::time::{Instant, Duration};
 
-use specs::prelude::*;
+use rand::{Rng, thread_rng};
+use sdl2::{
+    event::Event,
+    keyboard::Keycode,
+    pixels::Color,
+    rect::{Point, Rect},
+    image::{self, LoadTexture, InitFlag},
+};
+use specs::{World, WorldExt, Builder, DispatcherBuilder, SystemData};
 
-use std::time::Duration;
+use crate::direction::Direction;
+use crate::resources::{TimeDelta, KeyboardEvent, GameStatus};
+use crate::components::{
+    BoundingBox,
+    Velocity,
+    Sprite,
+    MovementAnimations,
+    Player,
+    Enemy,
+    Goal,
+};
+use crate::renderer::RendererData;
 
-use crate::components::*;
+fn main() -> Result<(), Box<dyn Error>> {
 
-pub enum MovementCommand {
-    Stop,
-    Move(Direction),
-}
-
-/// Returns the row of the spritesheet corresponding to the given direction
-fn direction_spritesheet_row(direction: Direction) -> i32 {
-    use self::Direction::*;
-    match direction {
-        Up => 3,
-        Down => 0,
-        Left => 1,
-        Right => 2,
-    }
-}
-
-/// Create animation frames for the standard character spritesheet
-fn character_animation_frames(spritesheet: usize, top_left_frame: Rect, direction: Direction) -> Vec<Sprite> {
-    // All assumptions about the spritesheets are now encapsulated in this function instead of in
-    // the design of our entire system. We can always replace this function, but replacing the
-    // entire system is harder.
-
-    let (frame_width, frame_height) = top_left_frame.size();
-    let y_offset = top_left_frame.y() + frame_height as i32 * direction_spritesheet_row(direction);
-
-    let mut frames = Vec::new();
-    for i in 0..3 {
-        frames.push(Sprite {
-            spritesheet,
-            region: Rect::new(
-                top_left_frame.x() + frame_width as i32 * i,
-                y_offset,
-                frame_width,
-                frame_height,
-            ),
-        })
-    }
-
-    frames
-}
-
-fn initialize_player(world: &mut World, player_spritesheet: usize) {
-    let player_top_left_frame = Rect::new(0, 0, 26, 36);
-
-    let player_animation = MovementAnimation {
-        current_frame: 0,
-        up_frames: character_animation_frames(player_spritesheet, player_top_left_frame, Direction::Up),
-        down_frames: character_animation_frames(player_spritesheet, player_top_left_frame, Direction::Down),
-        left_frames: character_animation_frames(player_spritesheet, player_top_left_frame, Direction::Left),
-        right_frames: character_animation_frames(player_spritesheet, player_top_left_frame, Direction::Right),
-    };
-
-    world.create_entity()
-        .with(KeyboardControlled)
-        .with(Position(Point::new(0, 0)))
-        .with(Velocity {speed: 0, direction: Direction::Right})
-        .with(player_animation.right_frames[0].clone())
-        .with(player_animation)
-        .build();
-}
-
-fn initialize_enemy(world: &mut World, enemy_spritesheet: usize, position: Point) {
-    let enemy_top_left_frame = Rect::new(0, 0, 32, 36);
-
-    let enemy_animation = MovementAnimation {
-        current_frame: 0,
-        up_frames: character_animation_frames(enemy_spritesheet, enemy_top_left_frame, Direction::Up),
-        down_frames: character_animation_frames(enemy_spritesheet, enemy_top_left_frame, Direction::Down),
-        left_frames: character_animation_frames(enemy_spritesheet, enemy_top_left_frame, Direction::Left),
-        right_frames: character_animation_frames(enemy_spritesheet, enemy_top_left_frame, Direction::Right),
-    };
-
-    world.create_entity()
-        .with(Enemy)
-        .with(Position(position))
-        .with(Velocity {speed: 0, direction: Direction::Right})
-        .with(enemy_animation.right_frames[0].clone())
-        .with(enemy_animation)
-        .build();
-}
-
-fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
-    // Leading "_" tells Rust that this is an unused variable that we don't care about. It has to
-    // stay unused because if we don't have any variable at all then Rust will treat it as a
-    // temporary value and drop it right away!
     let _image_context = image::init(InitFlag::PNG | InitFlag::JPG)?;
-
-    let window = video_subsystem.window("game tutorial", 800, 600)
+    let window = video_subsystem.window("Minimal Game", 800, 600)
         .position_centered()
-        .build()
-        .expect("could not initialize video subsystem");
+        .build()?;
+    let mut canvas = window.into_canvas().build()?;
+    let world_bounds = {
+        let (width, height) = canvas.output_size()?;
+        Rect::from_center((0, 0), width, height)
+    };
 
-    let mut canvas = window.into_canvas().build()
-        .expect("could not make a canvas");
     let texture_creator = canvas.texture_creator();
-
+    let textures = [
+        texture_creator.load_texture("assets/bardo_2x.png")?,
+        texture_creator.load_texture("assets/reaper_blade_2x.png")?,
+        texture_creator.load_texture("assets/pinktrees_2x.png")?,
+    ];
+    let bardo_texture = 0;
+    let reaper_texture = 1;
+    let pink_trees_texture = 2;
     let mut dispatcher = DispatcherBuilder::new()
-        .with(keyboard::Keyboard, "Keyboard", &[])
-        .with(ai::AI, "AI", &[])
-        .with(physics::Physics, "Physics", &["Keyboard"])
-        .with(animator::Animator, "Animator", &["Keyboard"])
+        .with(systems::Keyboard, "Keyboard", &[])
+        .with(systems::AI, "AI", &[])
+        .with(systems::Movement {world_bounds}, "Movement", &["Keyboard", "AI"])
+        .with(systems::WinLoseChecker, "WinLoseChecker", &["Movement"])
+        .with(systems::Animator, "Animator", &["Keyboard", "AI"])
         .build();
-
     let mut world = World::new();
     dispatcher.setup(&mut world);
-    renderer::SystemData::setup(&mut world);
+    RendererData::setup(&mut world);
+    let mut rng = thread_rng();
+    world.create_entity()
+        .with(Goal)
+        .with(BoundingBox(Rect::from_center((rng.gen_range(-300..301), -200), 92, 116)))
+        .with(Sprite {
+            texture_id: pink_trees_texture,
+            region: Rect::new(0, 0, 128, 128),
+        })
+        .build();
 
-    // Initialize resource
-    let movement_command: Option<MovementCommand> = None;
-    world.add_resource(movement_command);
+    let player_animations = MovementAnimations::standard_walking_animations(
+        bardo_texture,
+        Rect::new(0, 0, 52, 72),
+        3,
+        Duration::from_millis(150),
+    );
 
-    let textures = [
-        texture_creator.load_texture("assets/bardo.png")?,
-        texture_creator.load_texture("assets/reaper.png")?,
-    ];
-    // First texture in textures array
-    let player_spritesheet = 0;
-    // Second texture in the textures array
-    let enemy_spritesheet = 1;
+    world.create_entity()
+        .with(Player {movement_speed: 200})
+        .with(BoundingBox(Rect::from_center((rng.gen_range(-320..321), 250), 32, 58)))
+        .with(Velocity {speed: 0, direction: Direction::Down})
+        .with(player_animations.animation_for(Direction::Down).frames[0].sprite.clone())
+        .with(player_animations.animation_for(Direction::Down).clone())
+        .with(player_animations)
+        .build();
 
-    initialize_player(&mut world, player_spritesheet);
+    // Generate enemies in random positions. To avoid overlap with anything else, an area of the
+    // world coordinate system is divided up into a 2D grid. Each enemy gets a random position
+    // within one of the cells of that grid.
+    let enemy_animations = MovementAnimations::standard_walking_animations(
+        reaper_texture,
+        Rect::new(0, 0, 64, 72),
+        3,
+        Duration::from_millis(150),
+    );
 
-    initialize_enemy(&mut world, enemy_spritesheet, Point::new(-150, -150));
-    initialize_enemy(&mut world, enemy_spritesheet, Point::new(150, -190));
-    initialize_enemy(&mut world, enemy_spritesheet, Point::new(-150, 170));
+    for i in -1..2 {
+        for j in -2..0 {
+            let enemy_pos = Point::new(
+                i * 200 + rng.gen_range(-80..80),
+                j * 140 + 200 + rng.gen_range(-40..40),
+            );
+            let enemy_dir = match rng.gen_range(0..4) {
+                0 => Direction::Up,
+                1 => Direction::Down,
+                2 => Direction::Left,
+                3 => Direction::Right,
+                _ => unreachable!(),
+            };
 
+            world.create_entity()
+                .with(Enemy {
+                    direction_timer: Instant::now(),
+                    direction_change_delay: Duration::from_millis(200),
+                })
+                .with(BoundingBox(Rect::from_center(enemy_pos, 50, 58)))
+                .with(Velocity {speed: 200, direction: enemy_dir})
+                .with(enemy_animations.animation_for(enemy_dir).frames[0].sprite.clone())
+                .with(enemy_animations.animation_for(enemy_dir).clone())
+                .with(enemy_animations.clone())
+                .build();
+        }
+    }
+
+    world.insert(TimeDelta::default());
+    world.insert(GameStatus::Running);
+
+    // Begin game loop
+    let frame_duration = Duration::from_nanos(1_000_000_000 / 60);
     let mut event_pump = sdl_context.event_pump()?;
-    let mut i = 0;
     'running: loop {
-        // None - no change, Some(MovementCommand) - perform movement
-        let mut movement_command = None;
-        // Handle events
+        // HANDLE EVENTS
+        let mut keyboard_event = None;
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit {..} |
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-                    break 'running;
-                },
-                Event::KeyDown { keycode: Some(Keycode::Left), repeat: false, .. } => {
-                    movement_command = Some(MovementCommand::Move(Direction::Left));
-                },
-                Event::KeyDown { keycode: Some(Keycode::Right), repeat: false, .. } => {
-                    movement_command = Some(MovementCommand::Move(Direction::Right));
+                    break 'running
                 },
                 Event::KeyDown { keycode: Some(Keycode::Up), repeat: false, .. } => {
-                    movement_command = Some(MovementCommand::Move(Direction::Up));
+                    keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Up));
                 },
                 Event::KeyDown { keycode: Some(Keycode::Down), repeat: false, .. } => {
-                    movement_command = Some(MovementCommand::Move(Direction::Down));
+                    keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Down));
+                },
+                Event::KeyDown { keycode: Some(Keycode::Left), repeat: false, .. } => {
+                    keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Left));
+                },
+                Event::KeyDown { keycode: Some(Keycode::Right), repeat: false, .. } => {
+                    keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Right));
                 },
                 Event::KeyUp { keycode: Some(Keycode::Left), repeat: false, .. } |
                 Event::KeyUp { keycode: Some(Keycode::Right), repeat: false, .. } |
                 Event::KeyUp { keycode: Some(Keycode::Up), repeat: false, .. } |
                 Event::KeyUp { keycode: Some(Keycode::Down), repeat: false, .. } => {
-                    movement_command = Some(MovementCommand::Stop);
+                    keyboard_event = Some(KeyboardEvent::Stop);
                 },
                 _ => {}
             }
         }
 
-        *world.write_resource() = movement_command;
+        world.insert(keyboard_event);
 
-        // Update
-        i = (i + 1) % 255;
-        dispatcher.dispatch(&mut world);
+        // UPDATE
+        *world.write_resource() = TimeDelta(frame_duration);
+        dispatcher.dispatch(&world);
         world.maintain();
+        if let ControlFlow::Break(_) = check_win_or_lose(&world) {
+            break;
+        }
 
-        // Render
-        renderer::render(&mut canvas, Color::RGB(i, 64, 255 - i), &textures, world.system_data())?;
+        // RENDER
+        canvas.set_draw_color(Color::RGB(128, 128, 128));
+        canvas.clear();
+        let renderer_data: RendererData = world.system_data();
+        renderer_data.render(&mut canvas, &textures)?;
+        canvas.present();
 
-        // Time management!
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 20));
+        // LIMIT FRAMERATE
+
+        // Manage the timing of the game so that the loop doesn't go too quickly or too slowly.
+        //
+        // Time stepping is a complex topic. We're simplifying things by just always assuming that
+        // 1/60 seconds has passed in each iteration of the loop. 1/60th of a second is 60 FPS.
+        // There are *many* downsides to the code as it is below, but it's good enough as a
+        // starting point.
+        //
+        // For more information and some more robust approaches:
+        // * http://web.archive.org/web/20190506122532/http://gafferongames.com/post/fix_your_timestep/
+        // * https://www.gamasutra.com/blogs/BramStolk/20160408/269988/Fixing_your_time_step_the_easy_way_with_the_golden_48537_ms.php
+        thread::sleep(frame_duration);
     }
 
     Ok(())
+}
+
+fn check_win_or_lose(world: &World) -> ControlFlow<()> {
+    match *world.read_resource() {
+        GameStatus::Running => {}, // Keep going
+        GameStatus::Win => {
+            println!("You win!");
+            return ControlFlow::Break(());
+        },
+        GameStatus::Lose => {
+            println!("You lose!");
+            return ControlFlow::Break(());
+        },
+    }
+    ControlFlow::Continue(())
 }

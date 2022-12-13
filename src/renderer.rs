@@ -1,37 +1,37 @@
-use specs::prelude::*;
-use sdl2::rect::{Point, Rect};
-use sdl2::pixels::Color;
-use sdl2::render::{WindowCanvas, Texture};
+//! The renderer cannot be a normal system because it holds values that must be used on the main
+//! thread. It cannot be executed in parallel like other systems. Another complication is that it
+//! returns a `Result` whereas normal systems do not return anything.
 
-use crate::components::*;
+use specs::{SystemData, ReadStorage, Join, World, prelude::ResourceId};
+use sdl2::{
+    rect::{Point, Rect},
+    render::{WindowCanvas, Texture},
+};
 
-// Type alias for the data needed by the renderer
-pub type SystemData<'a> = (
-    ReadStorage<'a, Position>,
-    ReadStorage<'a, Sprite>,
-);
+use crate::components::{BoundingBox, Sprite};
 
-pub fn render(
-    canvas: &mut WindowCanvas,
-    background: Color,
-    textures: &[Texture],
-    data: SystemData,
-) -> Result<(), String> {
-    canvas.set_draw_color(background);
-    canvas.clear();
+/// Data from the world required by the renderer
+#[derive(SystemData)]
+pub struct RendererData<'a> {
+    bounding_boxes: ReadStorage<'a, BoundingBox>,
+    sprites: ReadStorage<'a, Sprite>,
+}
 
-    let (width, height) = canvas.output_size()?;
+impl<'a> RendererData<'a> {
+    pub fn render(&self, canvas: &mut WindowCanvas, textures: &[Texture]) -> Result<(), String> {
+        let RendererData {bounding_boxes, sprites} = self;
 
-    for (pos, sprite) in (&data.0, &data.1).join() {
-        let current_frame = sprite.region;
+        // The screen coordinate system has (0, 0) in its top-left corner whereas the
+        // world coordinate system has (0, 0) in the center of the screen.
+        let (width, height) = canvas.output_size()?;
+        let world_to_screen_offset = Point::new(width as i32 / 2, height as i32 / 2);
+        for (&BoundingBox(bounds), &Sprite {texture_id, region: sprite_rect}) in (bounding_boxes, sprites).join() {
+            let screen_pos = bounds.center() + world_to_screen_offset;
+            let screen_rect = Rect::from_center(screen_pos, sprite_rect.width(), sprite_rect.height());
 
-        // Treat the center of the screen as the (0, 0) coordinate
-        let screen_position = pos.0 + Point::new(width as i32 / 2, height as i32 / 2);
-        let screen_rect = Rect::from_center(screen_position, current_frame.width(), current_frame.height());
-        canvas.copy(&textures[sprite.spritesheet], current_frame, screen_rect)?;
+            canvas.copy(&textures[texture_id], sprite_rect, screen_rect)?;
+        }
+
+        Ok(())
     }
-
-    canvas.present();
-
-    Ok(())
 }
