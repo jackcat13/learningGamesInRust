@@ -29,9 +29,9 @@ impl<'a> System<'a> for Movement {
             let distance = speed * time_elapsed.as_micros() as i32 / 1_000_000;
             let new_pos = bounds.center() + direction.into_point() * distance;
             let new_bounds = Rect::from_center(new_pos, bounds.width(), bounds.height());
-            if self.world_bounds.contains_rect(new_bounds) {
-                *bounds = new_bounds;
-            }
+            *bounds = new_bounds;
+            /*if self.world_bounds.contains_rect(new_bounds) {
+            }*/
         }
     }
 }

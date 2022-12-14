@@ -10,6 +10,8 @@ use std::error::Error;
 use std::time::{Instant, Duration};
 
 use rand::{Rng, thread_rng};
+use sdl2::render::TextureCreator;
+use sdl2::video::WindowContext;
 use sdl2::{
     event::Event,
     keyboard::Keycode,
@@ -37,24 +39,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
     let _image_context = image::init(InitFlag::PNG | InitFlag::JPG)?;
-    let window = video_subsystem.window("Minimal Game", 800, 600)
+    let window = video_subsystem.window("Minimal Game", 900, 900)
         .position_centered()
         .build()?;
     let mut canvas = window.into_canvas().build()?;
+    let (width, height) = canvas.output_size()?;
     let world_bounds = {
-        let (width, height) = canvas.output_size()?;
         Rect::from_center((0, 0), width, height)
     };
 
     let texture_creator = canvas.texture_creator();
-    let textures = [
-        texture_creator.load_texture("assets/bardo_2x.png")?,
-        texture_creator.load_texture("assets/reaper_blade_2x.png")?,
-        texture_creator.load_texture("assets/pinktrees_2x.png")?,
-    ];
+    let textures = generate_textures(&texture_creator);
     let bardo_texture = 0;
     let reaper_texture = 1;
     let pink_trees_texture = 2;
+
     let mut dispatcher = DispatcherBuilder::new()
         .with(systems::Keyboard, "Keyboard", &[])
         .with(systems::AI, "AI", &[])
@@ -66,9 +65,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     dispatcher.setup(&mut world);
     RendererData::setup(&mut world);
     let mut rng = thread_rng();
+    let random_x_position = rng.gen_range(-i32::try_from(width/2)?..i32::try_from(width/2)?);
+    let y_position = -i32::try_from((height/2)-116)?;
     world.create_entity()
         .with(Goal)
-        .with(BoundingBox(Rect::from_center((rng.gen_range(-300..301), -200), 92, 116)))
+        .with(BoundingBox(Rect::from_center((random_x_position, y_position), 92, 116)))
         .with(Sprite {
             texture_id: pink_trees_texture,
             region: Rect::new(0, 0, 128, 128),
@@ -82,9 +83,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         Duration::from_millis(150),
     );
 
+    let random_x_position = rng.gen_range(-i32::try_from(width/2)?..i32::try_from(width/2)?);
     world.create_entity()
         .with(Player {movement_speed: 200})
-        .with(BoundingBox(Rect::from_center((rng.gen_range(-320..321), 250), 32, 58)))
+        .with(BoundingBox(Rect::from_center((random_x_position, 250), 32, 58)))
         .with(Velocity {speed: 0, direction: Direction::Down})
         .with(player_animations.animation_for(Direction::Down).frames[0].sprite.clone())
         .with(player_animations.animation_for(Direction::Down).clone())
@@ -199,6 +201,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn generate_textures(texture_creator: &TextureCreator<WindowContext>) -> [sdl2::render::Texture; 3] {
+    let error = "Could not load properly textures";
+    [
+        texture_creator.load_texture("assets/bardo_2x.png").expect(error),
+        texture_creator.load_texture("assets/reaper_blade_2x.png").expect(error),
+        texture_creator.load_texture("assets/pinktrees_2x.png").expect(error),
+    ]
 }
 
 fn check_win_or_lose(world: &World) -> ControlFlow<()> {
