@@ -214,13 +214,6 @@ fn generate_player_in_world(world: &mut World, sdl_context: &SDLGameContext){
 /// within one of the cells of that grid.
 fn generate_enemies_in_world(world: &mut World, sdl_context: &SDLGameContext){
     let mut rng = thread_rng();
-    let enemy_animations = MovementAnimations::standard_walking_animations(
-        sdl_context.reaper_texture,
-        Rect::new(0, 0, 64, 72),
-        3,
-        Duration::from_millis(150),
-    );
-
     for i in -1..2 {
         for j in -2..0 {
             let enemy_pos = Point::new(
@@ -234,17 +227,27 @@ fn generate_enemies_in_world(world: &mut World, sdl_context: &SDLGameContext){
                 3 => Direction::Right,
                 _ => unreachable!(),
             };
-            world.create_entity()
-                .with(Enemy {
-                    direction_timer: Instant::now(),
-                    direction_change_delay: Duration::from_millis(200),
-                })
-                .with(BoundingBox(Rect::from_center(enemy_pos, 50, 58)))
-                .with(Velocity {speed: 200, direction: enemy_dir})
-                .with(enemy_animations.animation_for(enemy_dir).frames[0].sprite.clone())
-                .with(enemy_animations.animation_for(enemy_dir).clone())
-                .with(enemy_animations.clone())
-                .build();
+            generate_ennemy_in_world(world, enemy_pos, enemy_dir, &sdl_context);
         }
     }
+}
+
+fn generate_ennemy_in_world(world: &mut World, enemy_pos: Point, enemy_dir: Direction, sdl_context: &SDLGameContext) {
+    let enemy_animations = MovementAnimations::standard_walking_animations(
+        sdl_context.reaper_texture,
+        Rect::new(0, 0, 64, 72),
+        3,
+        Duration::from_millis(150),
+    );
+    world.create_entity()
+        .with(Enemy {
+            direction_timer: Instant::now(),
+            direction_change_delay: Duration::from_millis(200),
+        })
+        .with(BoundingBox(Rect::from_center(enemy_pos, 50, 58)))
+        .with(Velocity {speed: 200, direction: enemy_dir})
+        .with(enemy_animations.animation_for(enemy_dir).frames[0].sprite.clone())
+        .with(enemy_animations.animation_for(enemy_dir).clone())
+        .with(enemy_animations.clone())
+        .build();
 }
