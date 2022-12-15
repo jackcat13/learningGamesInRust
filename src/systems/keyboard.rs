@@ -30,6 +30,7 @@ impl<'a> System<'a> for Keyboard {
                     velocity.speed = 0;
                 }
             },
+            Some(Escape) => {},
             None => {},
         }
     }

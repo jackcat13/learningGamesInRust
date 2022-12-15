@@ -6,12 +6,14 @@ use crate::direction::Direction;
 #[derive(Debug, Default)]
 pub struct TimeDelta(pub Duration);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum KeyboardEvent {
     /// Begin to move in the given direction
     MoveInDirection(Direction),
     /// Stop moving in the current direction
     Stop,
+    /// Escape event pressed
+    Escape,
 }
 
 /// The current status of the game

@@ -53,6 +53,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with(systems::WinLoseChecker, "WinLoseChecker", &["Movement"])
         .with(systems::Animator, "Animator", &["Keyboard", "AI"])
         .build();
+
     let mut world = World::new();
     dispatcher.setup(&mut world);
     RendererData::setup(&mut world);
@@ -73,52 +74,20 @@ fn game_loop(mut sdl_context: SDLGameContext, mut world: World, mut dispatcher: 
     let frame_duration = Duration::from_nanos(1_000_000_000 / 60);
     let mut event_pump = sdl_context.context.event_pump()?;
     Ok('running: loop {
-        // HANDLE EVENTS
-        let mut keyboard_event = None;
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit {..} |
-                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-                    break 'running
-                },
-                Event::KeyDown { keycode: Some(Keycode::Up), repeat: false, .. } => {
-                    keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Up));
-                },
-                Event::KeyDown { keycode: Some(Keycode::Down), repeat: false, .. } => {
-                    keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Down));
-                },
-                Event::KeyDown { keycode: Some(Keycode::Left), repeat: false, .. } => {
-                    keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Left));
-                },
-                Event::KeyDown { keycode: Some(Keycode::Right), repeat: false, .. } => {
-                    keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Right));
-                },
-                Event::KeyUp { keycode: Some(Keycode::Left), repeat: false, .. } |
-                Event::KeyUp { keycode: Some(Keycode::Right), repeat: false, .. } |
-                Event::KeyUp { keycode: Some(Keycode::Up), repeat: false, .. } |
-                Event::KeyUp { keycode: Some(Keycode::Down), repeat: false, .. } => {
-                    keyboard_event = Some(KeyboardEvent::Stop);
-                },
-                _ => {}
-            }
+        // Handle events
+        let keyboard_event = handle_game_events(&mut event_pump);
+        if keyboard_event == Some(KeyboardEvent::Escape){
+            break 'running;
         }
-
         world.insert(keyboard_event);
 
-        // UPDATE
-        *world.write_resource() = TimeDelta(frame_duration);
-        dispatcher.dispatch(&world);
-        world.maintain();
-        if let ControlFlow::Break(_) = check_win_or_lose(&world) {
+        // Update world
+        if let ControlFlow::Break(_) = update_world(&mut world, frame_duration, &mut dispatcher) {
             break;
         }
 
-        // RENDER
-        sdl_context.canvas.set_draw_color(Color::RGB(128, 128, 128));
-        sdl_context.canvas.clear();
-        let renderer_data: RendererData = world.system_data();
-        renderer_data.render(&mut sdl_context.canvas, &textures)?;
-        sdl_context.canvas.present();
+        // Render game
+        render_game(&mut sdl_context, &world, &textures)?;
 
         // LIMIT FRAMERATE
 
@@ -134,6 +103,60 @@ fn game_loop(mut sdl_context: SDLGameContext, mut world: World, mut dispatcher: 
         // * https://www.gamasutra.com/blogs/BramStolk/20160408/269988/Fixing_your_time_step_the_easy_way_with_the_golden_48537_ms.php
         thread::sleep(frame_duration);
     })
+}
+
+/// RENDER GAME IN WINDOW
+fn render_game(sdl_context: &mut SDLGameContext, world: &World, textures: &Vec<sdl2::render::Texture>) -> Result<(), Box<dyn Error>> {
+    sdl_context.canvas.set_draw_color(Color::RGB(128, 128, 128));
+    sdl_context.canvas.clear();
+    let renderer_data: RendererData = world.system_data();
+    renderer_data.render(&mut sdl_context.canvas, textures)?;
+    sdl_context.canvas.present();
+    Ok(())
+}
+
+/// UPDATE GAME
+fn update_world(world: &mut World, frame_duration: Duration, dispatcher: &mut specs::Dispatcher) -> ControlFlow<()> {
+    *world.write_resource() = TimeDelta(frame_duration);
+    dispatcher.dispatch(&*world);
+    world.maintain();
+    if let ControlFlow::Break(_) = check_win_or_lose(&*world) {
+        return ControlFlow::Break(());
+    }
+    ControlFlow::Continue(())
+}
+
+/// HANDLE GAME EVENTS
+fn handle_game_events(event_pump: &mut sdl2::EventPump) -> Option<KeyboardEvent> {
+    let mut keyboard_event = None;
+    for event in event_pump.poll_iter() {
+        match event {
+            Event::Quit {..} |
+            Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                keyboard_event = Some(KeyboardEvent::Escape)
+            },
+            Event::KeyDown { keycode: Some(Keycode::Up), repeat: false, .. } => {
+                keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Up));
+            },
+            Event::KeyDown { keycode: Some(Keycode::Down), repeat: false, .. } => {
+                keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Down));
+            },
+            Event::KeyDown { keycode: Some(Keycode::Left), repeat: false, .. } => {
+                keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Left));
+            },
+            Event::KeyDown { keycode: Some(Keycode::Right), repeat: false, .. } => {
+                keyboard_event = Some(KeyboardEvent::MoveInDirection(Direction::Right));
+            },
+            Event::KeyUp { keycode: Some(Keycode::Left), repeat: false, .. } |
+            Event::KeyUp { keycode: Some(Keycode::Right), repeat: false, .. } |
+            Event::KeyUp { keycode: Some(Keycode::Up), repeat: false, .. } |
+            Event::KeyUp { keycode: Some(Keycode::Down), repeat: false, .. } => {
+                keyboard_event = Some(KeyboardEvent::Stop);
+            },
+            _ => {}
+        }
+    }
+    keyboard_event
 }
 
 fn check_win_or_lose(world: &World) -> ControlFlow<()> {
