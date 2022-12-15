@@ -18,6 +18,7 @@ use sdl2::{
     rect::{Point, Rect},
     image::LoadTexture,
 };
+use sdl_context::SDLGameContext;
 use specs::{World, WorldExt, Builder, DispatcherBuilder, SystemData};
 
 use crate::direction::Direction;
@@ -35,7 +36,7 @@ use crate::renderer::RendererData;
 
 fn main() -> Result<(), Box<dyn Error>> {
     
-    let mut sdl_context = sdl_context::sld_context();
+    let sdl_context = sdl_context::sld_context();
 
     let texture_creator = sdl_context.canvas.texture_creator();
     let error = String::from("Could not load properly textures");
@@ -55,80 +56,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut world = World::new();
     dispatcher.setup(&mut world);
     RendererData::setup(&mut world);
-    let mut rng = thread_rng();
-    let random_x_position = rng.gen_range(-i32::try_from(sdl_context.width/2)?..i32::try_from(sdl_context.width/2)?);
-    let y_position = -i32::try_from((sdl_context.height/2)-116)?;
-    world.create_entity()
-        .with(Goal)
-        .with(BoundingBox(Rect::from_center((random_x_position, y_position), 92, 116)))
-        .with(Sprite {
-            texture_id: sdl_context.pink_tree_texture,
-            region: Rect::new(0, 0, 128, 128),
-        })
-        .build();
-
-    let player_animations = MovementAnimations::standard_walking_animations(
-        sdl_context.bardo_texture,
-        Rect::new(0, 0, 52, 72),
-        3,
-        Duration::from_millis(150),
-    );
-
-    let random_x_position = rng.gen_range(-i32::try_from(sdl_context.width/2)?..i32::try_from(sdl_context.width/2)?);
-    world.create_entity()
-        .with(Player {movement_speed: 200})
-        .with(BoundingBox(Rect::from_center((random_x_position, 250), 32, 58)))
-        .with(Velocity {speed: 0, direction: Direction::Down})
-        .with(player_animations.animation_for(Direction::Down).frames[0].sprite.clone())
-        .with(player_animations.animation_for(Direction::Down).clone())
-        .with(player_animations)
-        .build();
-
-    // Generate enemies in random positions. To avoid overlap with anything else, an area of the
-    // world coordinate system is divided up into a 2D grid. Each enemy gets a random position
-    // within one of the cells of that grid.
-    let enemy_animations = MovementAnimations::standard_walking_animations(
-        sdl_context.reaper_texture,
-        Rect::new(0, 0, 64, 72),
-        3,
-        Duration::from_millis(150),
-    );
-
-    for i in -1..2 {
-        for j in -2..0 {
-            let enemy_pos = Point::new(
-                i * 200 + rng.gen_range(-80..80),
-                j * 140 + 200 + rng.gen_range(-40..40),
-            );
-            let enemy_dir = match rng.gen_range(0..4) {
-                0 => Direction::Up,
-                1 => Direction::Down,
-                2 => Direction::Left,
-                3 => Direction::Right,
-                _ => unreachable!(),
-            };
-
-            world.create_entity()
-                .with(Enemy {
-                    direction_timer: Instant::now(),
-                    direction_change_delay: Duration::from_millis(200),
-                })
-                .with(BoundingBox(Rect::from_center(enemy_pos, 50, 58)))
-                .with(Velocity {speed: 200, direction: enemy_dir})
-                .with(enemy_animations.animation_for(enemy_dir).frames[0].sprite.clone())
-                .with(enemy_animations.animation_for(enemy_dir).clone())
-                .with(enemy_animations.clone())
-                .build();
-        }
-    }
+    
+    generate_goal_in_world(&mut world, &sdl_context);
+    generate_player_in_world(&mut world, &sdl_context);
+    generate_enemies_in_world(&mut world, &sdl_context);
 
     world.insert(TimeDelta::default());
     world.insert(GameStatus::Running);
 
-    // Begin game loop
+    game_loop(sdl_context, world, dispatcher, textures)?;
+
+    Ok(())
+}
+
+fn game_loop(mut sdl_context: SDLGameContext, mut world: World, mut dispatcher: specs::Dispatcher, textures: Vec<sdl2::render::Texture>) -> Result<(), Box<dyn Error>> {
     let frame_duration = Duration::from_nanos(1_000_000_000 / 60);
     let mut event_pump = sdl_context.context.event_pump()?;
-    'running: loop {
+    Ok('running: loop {
         // HANDLE EVENTS
         let mut keyboard_event = None;
         for event in event_pump.poll_iter() {
@@ -189,9 +133,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // * http://web.archive.org/web/20190506122532/http://gafferongames.com/post/fix_your_timestep/
         // * https://www.gamasutra.com/blogs/BramStolk/20160408/269988/Fixing_your_time_step_the_easy_way_with_the_golden_48537_ms.php
         thread::sleep(frame_duration);
-    }
-
-    Ok(())
+    })
 }
 
 fn check_win_or_lose(world: &World) -> ControlFlow<()> {
@@ -207,4 +149,79 @@ fn check_win_or_lose(world: &World) -> ControlFlow<()> {
         },
     }
     ControlFlow::Continue(())
+}
+
+fn generate_goal_in_world(world: &mut World, sdl_context: &SDLGameContext){
+    let mut rng = thread_rng();
+    let position_error = "Error generating positions of goal";
+    let random_x_position = rng.gen_range(-i32::try_from(sdl_context.width/2).expect(position_error)..i32::try_from(sdl_context.width/2).expect(position_error));
+    let y_position = -i32::try_from((sdl_context.height/2)-116).expect(position_error);
+    world.create_entity()
+        .with(Goal)
+        .with(BoundingBox(Rect::from_center((random_x_position, y_position), 92, 116)))
+        .with(Sprite {
+            texture_id: sdl_context.pink_tree_texture,
+            region: Rect::new(0, 0, 128, 128),
+        })
+        .build();
+}
+
+fn generate_player_in_world(world: &mut World, sdl_context: &SDLGameContext){
+    let mut rng = thread_rng();
+    let position_error = "Error generating positions of player";
+    let player_animations = MovementAnimations::standard_walking_animations(
+        sdl_context.bardo_texture,
+        Rect::new(0, 0, 52, 72),
+        3,
+        Duration::from_millis(150),
+    );
+    let random_x_position = rng.gen_range(-i32::try_from(sdl_context.width/2).expect(position_error)..i32::try_from(sdl_context.width/2).expect(position_error));
+    world.create_entity()
+        .with(Player {movement_speed: 200})
+        .with(BoundingBox(Rect::from_center((random_x_position, 250), 32, 58)))
+        .with(Velocity {speed: 0, direction: Direction::Down})
+        .with(player_animations.animation_for(Direction::Down).frames[0].sprite.clone())
+        .with(player_animations.animation_for(Direction::Down).clone())
+        .with(player_animations)
+        .build();
+}
+
+/// Generate enemies in random positions. To avoid overlap with anything else, an area of the
+/// world coordinate system is divided up into a 2D grid. Each enemy gets a random position
+/// within one of the cells of that grid.
+fn generate_enemies_in_world(world: &mut World, sdl_context: &SDLGameContext){
+    let mut rng = thread_rng();
+    let enemy_animations = MovementAnimations::standard_walking_animations(
+        sdl_context.reaper_texture,
+        Rect::new(0, 0, 64, 72),
+        3,
+        Duration::from_millis(150),
+    );
+
+    for i in -1..2 {
+        for j in -2..0 {
+            let enemy_pos = Point::new(
+                i * 200 + rng.gen_range(-80..80),
+                j * 140 + 200 + rng.gen_range(-40..40),
+            );
+            let enemy_dir = match rng.gen_range(0..4) {
+                0 => Direction::Up,
+                1 => Direction::Down,
+                2 => Direction::Left,
+                3 => Direction::Right,
+                _ => unreachable!(),
+            };
+            world.create_entity()
+                .with(Enemy {
+                    direction_timer: Instant::now(),
+                    direction_change_delay: Duration::from_millis(200),
+                })
+                .with(BoundingBox(Rect::from_center(enemy_pos, 50, 58)))
+                .with(Velocity {speed: 200, direction: enemy_dir})
+                .with(enemy_animations.animation_for(enemy_dir).frames[0].sprite.clone())
+                .with(enemy_animations.animation_for(enemy_dir).clone())
+                .with(enemy_animations.clone())
+                .build();
+        }
+    }
 }
