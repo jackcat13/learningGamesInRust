@@ -19,7 +19,7 @@ pub struct RendererData<'a> {
 }
 
 impl<'a> RendererData<'a> {
-    pub fn render(&self, canvas: &mut WindowCanvas, textures: &[Texture]) -> Result<(), String> {
+    pub fn render(&self, canvas: &mut WindowCanvas, textures: &Vec<Texture>) -> Result<(), String> {
         let RendererData {
             players,
             bounding_boxes, 

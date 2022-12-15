@@ -3,6 +3,7 @@ mod components;
 mod resources;
 mod systems;
 mod renderer;
+mod sdl_context;
 
 use std::ops::ControlFlow;
 use std::thread;
@@ -10,14 +11,12 @@ use std::error::Error;
 use std::time::{Instant, Duration};
 
 use rand::{Rng, thread_rng};
-use sdl2::render::TextureCreator;
-use sdl2::video::WindowContext;
 use sdl2::{
     event::Event,
     keyboard::Keycode,
     pixels::Color,
     rect::{Point, Rect},
-    image::{self, LoadTexture, InitFlag},
+    image::LoadTexture,
 };
 use specs::{World, WorldExt, Builder, DispatcherBuilder, SystemData};
 
@@ -35,29 +34,21 @@ use crate::components::{
 use crate::renderer::RendererData;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    
+    let mut sdl_context = sdl_context::sld_context();
 
-    let sdl_context = sdl2::init()?;
-    let video_subsystem = sdl_context.video()?;
-    let _image_context = image::init(InitFlag::PNG | InitFlag::JPG)?;
-    let window = video_subsystem.window("Minimal Game", 900, 900)
-        .position_centered()
-        .build()?;
-    let mut canvas = window.into_canvas().build()?;
-    let (width, height) = canvas.output_size()?;
-    let world_bounds = {
-        Rect::from_center((0, 0), width, height)
-    };
-
-    let texture_creator = canvas.texture_creator();
-    let textures = generate_textures(&texture_creator);
-    let bardo_texture = 0;
-    let reaper_texture = 1;
-    let pink_trees_texture = 2;
+    let texture_creator = sdl_context.canvas.texture_creator();
+    let error = String::from("Could not load properly textures");
+    let textures = vec!(
+        texture_creator.load_texture("assets/bardo_2x.png").expect(error.as_str()),
+        texture_creator.load_texture("assets/reaper_blade_2x.png").expect(error.as_str()),
+        texture_creator.load_texture("assets/pinktrees_2x.png").expect(error.as_str()),
+    );
 
     let mut dispatcher = DispatcherBuilder::new()
         .with(systems::Keyboard, "Keyboard", &[])
         .with(systems::AI, "AI", &[])
-        .with(systems::Movement {world_bounds}, "Movement", &["Keyboard", "AI"])
+        .with(systems::Movement {world_bounds: sdl_context.world_bounds}, "Movement", &["Keyboard", "AI"])
         .with(systems::WinLoseChecker, "WinLoseChecker", &["Movement"])
         .with(systems::Animator, "Animator", &["Keyboard", "AI"])
         .build();
@@ -65,25 +56,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     dispatcher.setup(&mut world);
     RendererData::setup(&mut world);
     let mut rng = thread_rng();
-    let random_x_position = rng.gen_range(-i32::try_from(width/2)?..i32::try_from(width/2)?);
-    let y_position = -i32::try_from((height/2)-116)?;
+    let random_x_position = rng.gen_range(-i32::try_from(sdl_context.width/2)?..i32::try_from(sdl_context.width/2)?);
+    let y_position = -i32::try_from((sdl_context.height/2)-116)?;
     world.create_entity()
         .with(Goal)
         .with(BoundingBox(Rect::from_center((random_x_position, y_position), 92, 116)))
         .with(Sprite {
-            texture_id: pink_trees_texture,
+            texture_id: sdl_context.pink_tree_texture,
             region: Rect::new(0, 0, 128, 128),
         })
         .build();
 
     let player_animations = MovementAnimations::standard_walking_animations(
-        bardo_texture,
+        sdl_context.bardo_texture,
         Rect::new(0, 0, 52, 72),
         3,
         Duration::from_millis(150),
     );
 
-    let random_x_position = rng.gen_range(-i32::try_from(width/2)?..i32::try_from(width/2)?);
+    let random_x_position = rng.gen_range(-i32::try_from(sdl_context.width/2)?..i32::try_from(sdl_context.width/2)?);
     world.create_entity()
         .with(Player {movement_speed: 200})
         .with(BoundingBox(Rect::from_center((random_x_position, 250), 32, 58)))
@@ -97,7 +88,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // world coordinate system is divided up into a 2D grid. Each enemy gets a random position
     // within one of the cells of that grid.
     let enemy_animations = MovementAnimations::standard_walking_animations(
-        reaper_texture,
+        sdl_context.reaper_texture,
         Rect::new(0, 0, 64, 72),
         3,
         Duration::from_millis(150),
@@ -136,7 +127,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Begin game loop
     let frame_duration = Duration::from_nanos(1_000_000_000 / 60);
-    let mut event_pump = sdl_context.event_pump()?;
+    let mut event_pump = sdl_context.context.event_pump()?;
     'running: loop {
         // HANDLE EVENTS
         let mut keyboard_event = None;
@@ -179,11 +170,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         // RENDER
-        canvas.set_draw_color(Color::RGB(128, 128, 128));
-        canvas.clear();
+        sdl_context.canvas.set_draw_color(Color::RGB(128, 128, 128));
+        sdl_context.canvas.clear();
         let renderer_data: RendererData = world.system_data();
-        renderer_data.render(&mut canvas, &textures)?;
-        canvas.present();
+        renderer_data.render(&mut sdl_context.canvas, &textures)?;
+        sdl_context.canvas.present();
 
         // LIMIT FRAMERATE
 
@@ -201,15 +192,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
-}
-
-fn generate_textures(texture_creator: &TextureCreator<WindowContext>) -> [sdl2::render::Texture; 3] {
-    let error = "Could not load properly textures";
-    [
-        texture_creator.load_texture("assets/bardo_2x.png").expect(error),
-        texture_creator.load_texture("assets/reaper_blade_2x.png").expect(error),
-        texture_creator.load_texture("assets/pinktrees_2x.png").expect(error),
-    ]
 }
 
 fn check_win_or_lose(world: &World) -> ControlFlow<()> {

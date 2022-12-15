@@ -1,5 +1,5 @@
 [package]
-name = "learningGameInRust"
+name = "learning_game_in_rust"
 version = "0.1.0"
 edition = "2021"
 authors = ["Chris <christophehenry11@gmail.com"]
